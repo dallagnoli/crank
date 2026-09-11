@@ -85,16 +85,6 @@ impl RunningSession {
         let _ = sender.send(RuntimeEvent::Started {
             action_id: action_id.clone(),
         });
-        // Begin reading while the original slave is still open. The monitor
-        // also retains that slave until the child exits: on FreeBSD a
-        // short-lived child can otherwise close the last slave before the
-        // reader enters its first read, causing its buffered output to be lost.
-        let output_sender = sender.clone();
-        let output = thread::Builder::new()
-            .name("crank-action-output".to_owned())
-            .spawn(move || copy_output(reader, output_sender))
-            .map_err(StartError::Monitor)?;
-
         let mut builder = CommandBuilder::new(&command.program);
         builder.args(&command.args);
         builder.cwd(&command.working_directory);
@@ -105,13 +95,25 @@ impl RunningSession {
                 action: action_id.clone(),
                 message: error.to_string(),
             })?;
+        // FreeBSD can report EOF when the master is read before a child has
+        // attached to the slave. Start the reader only after spawning, then
+        // wait until its thread is running before closing our slave handle.
+        let (reader_ready_sender, reader_ready) = sync_channel(0);
+        let output_sender = sender.clone();
+        let output = thread::Builder::new()
+            .name("crank-action-output".to_owned())
+            .spawn(move || {
+                let _ = reader_ready_sender.send(());
+                copy_output(reader, output_sender);
+            })
+            .map_err(StartError::Monitor)?;
+        let _ = reader_ready.recv();
+        drop(pair.slave);
         let killer = child.clone_killer();
         let cancellation_requested = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::clone(&cancellation_requested);
-        let slave = pair.slave;
         let monitor = thread::spawn(move || {
             let status = child.wait();
-            drop(slave);
             let _ = output.join();
             match status {
                 Ok(status) => {
