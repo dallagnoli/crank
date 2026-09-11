@@ -1,0 +1,35 @@
+schema_version = 1
+
+[[categories]]
+id = "fixtures"
+label = "Platform fixtures"
+description = "Harmless actions used to exercise Crank's runtime."
+
+[[actions]]
+id = "fixture.hello"
+label = "Print a greeting"
+description = "Prints a short greeting and exits successfully."
+category = "fixtures"
+script = "scripts/hello.sh"
+
+[[actions]]
+id = "fixture.prompt"
+label = "Prompt for input"
+description = "Reads a name from the terminal and prints it back."
+category = "fixtures"
+script = "scripts/prompt.sh"
+
+[[actions]]
+id = "fixture.fail"
+label = "Exit with an error"
+description = "Prints an error and exits with status 42."
+category = "fixtures"
+script = "scripts/fail.sh"
+
+[[actions]]
+id = "fixture.sibling"
+label = "Read a sibling asset"
+description = "Reads a bundled file through a relative path."
+category = "fixtures"
+script = "scripts/sibling.sh"
+

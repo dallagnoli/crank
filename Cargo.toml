@@ -1,0 +1,23 @@
+[package]
+name = "crank"
+version = "0.1.0"
+edition = "2024"
+description = "A portable terminal launcher for curated scripts"
+license = "MIT"
+repository = "https://github.com/dallagnoli/crank"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+tempfile = "3.21"
+thiserror = "2.0"
+toml = "0.9"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+
+[profile.release]
+lto = "thin"
+strip = true
+
