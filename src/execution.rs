@@ -351,6 +351,7 @@ impl Drop for RunningSession {
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::TryRecvError;
+    use std::sync::{Mutex, MutexGuard};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -358,6 +359,14 @@ mod tests {
     use crate::catalog::load_embedded;
     use crate::host::Host;
     use crate::runtime::resolve;
+
+    static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn serial_pty_test() -> MutexGuard<'static, ()> {
+        PTY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     fn start_fixture(name: &str) -> RunningSession {
         let bundle = load_embedded().unwrap();
@@ -390,6 +399,7 @@ mod tests {
 
     #[test]
     fn fast_exit_output_is_never_lost() {
+        let _guard = serial_pty_test();
         for attempt in 1..=32 {
             let mut session = start_fixture("fixture.hello");
             let (result, output) = wait_for_result(&mut session);
@@ -408,6 +418,7 @@ mod tests {
 
     #[test]
     fn forwards_input_to_an_interactive_fixture() {
+        let _guard = serial_pty_test();
         let mut session = start_fixture("fixture.prompt");
         session.write_input(b"Ada\r").unwrap();
         let (result, output) = wait_for_result(&mut session);
@@ -421,6 +432,7 @@ mod tests {
 
     #[test]
     fn cancellation_has_a_distinct_result() {
+        let _guard = serial_pty_test();
         let mut session = start_fixture("fixture.interrupt");
         session.cancel().unwrap();
         let (result, _) = wait_for_result(&mut session);
