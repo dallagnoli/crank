@@ -33,3 +33,23 @@ description = "Reads a bundled file through a relative path."
 category = "fixtures"
 script = "scripts/sibling.sh"
 
+[[actions]]
+id = "fixture.interrupt"
+label = "Wait for interruption"
+description = "Waits until Ctrl-C interrupts its terminal process group."
+category = "fixtures"
+script = "scripts/interrupt.sh"
+
+[[actions]]
+id = "fixture.colors"
+label = "Display terminal colors"
+description = "Prints ordinary ANSI colors for terminal parser validation."
+category = "fixtures"
+script = "scripts/colors.sh"
+
+[[actions]]
+id = "fixture.output"
+label = "Print sustained output"
+description = "Prints enough lines to exercise bounded output handling."
+category = "fixtures"
+script = "scripts/output.sh"

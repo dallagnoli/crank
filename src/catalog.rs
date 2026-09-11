@@ -4,32 +4,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
+use include_dir::{Dir, include_dir};
 use serde::Deserialize;
 use thiserror::Error;
 
 const EMBEDDED_MANIFEST: &str = include_str!("../catalog/catalog.toml");
-const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
-    (
-        "scripts/hello.sh",
-        include_str!("../catalog/scripts/hello.sh"),
-    ),
-    (
-        "scripts/prompt.sh",
-        include_str!("../catalog/scripts/prompt.sh"),
-    ),
-    (
-        "scripts/fail.sh",
-        include_str!("../catalog/scripts/fail.sh"),
-    ),
-    (
-        "scripts/sibling.sh",
-        include_str!("../catalog/scripts/sibling.sh"),
-    ),
-    (
-        "assets/message.txt",
-        include_str!("../catalog/assets/message.txt"),
-    ),
-];
+static EMBEDDED_DIRECTORY: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/catalog");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -208,17 +188,27 @@ pub struct EmbeddedFiles;
 
 impl CatalogFiles for EmbeddedFiles {
     fn read(&self, relative_path: &Path) -> Option<Vec<u8>> {
-        let wanted = relative_path.to_str()?;
-        EMBEDDED_SCRIPTS
-            .iter()
-            .find_map(|(path, contents)| (*path == wanted).then(|| contents.as_bytes().to_vec()))
+        EMBEDDED_DIRECTORY
+            .get_file(relative_path)
+            .map(|file| file.contents().to_vec())
     }
 
     fn paths(&self) -> Vec<PathBuf> {
-        EMBEDDED_SCRIPTS
-            .iter()
-            .map(|(path, _)| PathBuf::from(path))
-            .collect()
+        let mut paths = Vec::new();
+        collect_embedded_paths(&EMBEDDED_DIRECTORY, &mut paths);
+        paths
+    }
+}
+
+fn collect_embedded_paths(directory: &Dir<'_>, paths: &mut Vec<PathBuf>) {
+    paths.extend(
+        directory
+            .files()
+            .filter(|file| file.path() != Path::new("catalog.toml"))
+            .map(|file| file.path().to_owned()),
+    );
+    for child in directory.dirs() {
+        collect_embedded_paths(child, paths);
     }
 }
 

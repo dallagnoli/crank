@@ -8,10 +8,15 @@ repository = "https://github.com/dallagnoli/crank"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+include_dir = "0.7"
+portable-pty = "0.9"
+ratatui = "0.29"
 serde = { version = "1.0", features = ["derive"] }
 tempfile = "3.21"
 thiserror = "2.0"
 toml = "0.9"
+vt100 = "0.15"
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -20,4 +25,3 @@ predicates = "3.1"
 [profile.release]
 lto = "thin"
 strip = true
-

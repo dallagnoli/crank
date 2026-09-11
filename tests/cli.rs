@@ -20,3 +20,14 @@ fn validates_embedded_catalog() {
         .success()
         .stdout(predicate::str::contains("catalog is valid"));
 }
+
+#[test]
+fn interactive_mode_explains_when_no_terminal_is_attached() {
+    Command::cargo_bin("crank")
+        .unwrap()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "interactive mode requires a terminal",
+        ));
+}

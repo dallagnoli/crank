@@ -16,5 +16,9 @@ cargo run -- --catalog ./catalog --validate
 The local catalog option uses the same parser and validation rules as the
 catalog embedded in release binaries.
 
-See [SPEC.md](SPEC.md) for the product and portability contract.
+Inside Crank, use the arrow keys and Enter to browse, `/` to search, `p` to
+preview a script, and `?` for the complete key list. While an action is active,
+Ctrl-C reaches its terminal session and the reserved Ctrl-X chord requests
+cancellation.
 
+See [SPEC.md](SPEC.md) for the product and portability contract.

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use crank::catalog::{CatalogSource, load_embedded, load_local};
+use crank::catalog::{CatalogBundle, CatalogFiles, CatalogSource, load_embedded, load_local};
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -24,33 +24,29 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let (catalog, source) = match cli.catalog {
-        Some(path) => {
-            let bundle = load_local(path)?;
-            (bundle.catalog, bundle.source)
-        }
-        None => {
-            let bundle = load_embedded()?;
-            (bundle.catalog, bundle.source)
-        }
-    };
+    match cli.catalog {
+        Some(path) => run_bundle(load_local(path)?, cli.validate),
+        None => run_bundle(load_embedded()?, cli.validate),
+    }
+}
 
-    if cli.validate {
-        let location = match source {
+fn run_bundle<F: CatalogFiles>(
+    bundle: CatalogBundle<F>,
+    validate_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if validate_only {
+        let location = match &bundle.source {
             CatalogSource::Embedded => "embedded".to_owned(),
             CatalogSource::Local(path) => path.display().to_string(),
         };
         println!(
             "catalog is valid: {} categories, {} actions ({location})",
-            catalog.categories.len(),
-            catalog.actions.len()
+            bundle.catalog.categories.len(),
+            bundle.catalog.actions.len()
         );
         return Ok(());
     }
 
-    println!(
-        "Crank catalog loaded ({} actions). The interactive interface is coming next.",
-        catalog.actions.len()
-    );
+    crank::tui::run(bundle.catalog, &bundle.files, bundle.source)?;
     Ok(())
 }
