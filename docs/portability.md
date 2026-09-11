@@ -28,13 +28,13 @@ curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/cra
 Pin a release with:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/crank.sh | sh -s -- --version 0.1.0
+curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/crank.sh | sh -s -- --version 0.1.1
 ```
 
 Pass binary arguments after a second `--`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/crank.sh | sh -s -- --version 0.1.0 -- --catalog /path/to/catalog
+curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/crank.sh | sh -s -- --version 0.1.1 -- --catalog /path/to/catalog
 ```
 
 The bootstrap selects an artifact from an explicit target map, downloads the

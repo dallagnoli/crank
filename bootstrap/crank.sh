@@ -3,7 +3,7 @@
 # This file must parse completely before crank_main runs. That matters when the
 # script is supplied to a shell through standard input.
 
-CRANK_DEFAULT_VERSION=0.1.0
+CRANK_DEFAULT_VERSION=0.1.1
 CRANK_DEFAULT_RELEASE_BASE=https://github.com/dallagnoli/crank/releases/download
 
 crank_usage() {
@@ -14,7 +14,7 @@ Usage:
   crank.sh [--version VERSION] [--] [CRANK_ARGUMENTS...]
 
 Options:
-  --version VERSION  Download one immutable release (default: 0.1.0)
+  --version VERSION  Download one immutable release (default: 0.1.1)
   -h, --help         Show this help without downloading Crank
 
 Arguments after -- are passed unchanged to the Crank binary.
