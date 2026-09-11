@@ -57,7 +57,7 @@ jobs:
       - name: Test inside FreeBSD 14
         uses: vmactions/freebsd-vm@v1.5.2
         with:
-          release: "14"
+          release: "14.4"
           usesh: true
           copyback: false
           prepare: pkg install -y rust
