@@ -22,3 +22,7 @@ Ctrl-C reaches its terminal session and the reserved Ctrl-X chord requests
 cancellation.
 
 See [SPEC.md](SPEC.md) for the product and portability contract.
+
+The tested release targets and bootstrap behavior are documented in
+[docs/portability.md](docs/portability.md). No public release has been
+published yet.

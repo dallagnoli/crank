@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup update stable && rustup default stable
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-targets
+      - run: shellcheck bootstrap/crank.sh scripts/package-release.sh tests/bootstrap.sh
+      - run: sh tests/bootstrap.sh
+
+  linux-musl:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup update stable && rustup default stable
+      - run: rustup target add ${{ matrix.target }}
+      - run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - run: cargo test --all-targets
+      - run: cargo build --release --target ${{ matrix.target }}
+      - run: target/${{ matrix.target }}/release/crank --validate
+      - name: Validate static executable on musl userspace
+        run: docker run --rm -v "$PWD/target/${{ matrix.target }}/release:/crank:ro" alpine:3.23 /crank/crank --validate
+
+  macos:
+    strategy:
+      matrix:
+        runner: [macos-15-intel, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup update stable && rustup default stable
+      - run: cargo test --all-targets
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  freebsd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test inside FreeBSD 14
+        uses: vmactions/freebsd-vm@v1.5.2
+        with:
+          release: "14"
+          usesh: true
+          copyback: false
+          prepare: pkg install -y rust
+          run: |
+            cargo test --all-targets
+            cargo clippy --all-targets --all-features -- -D warnings
