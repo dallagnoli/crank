@@ -48,6 +48,8 @@ pub enum StartError {
     OpenWriter(String),
     #[error("could not launch action `{action}`: {message}")]
     Spawn { action: ActionId, message: String },
+    #[error("could not synchronize action `{action}` before launch: {message}")]
+    Synchronize { action: ActionId, message: String },
     #[error("could not start the action output monitor: {0}")]
     Monitor(std::io::Error),
 }
@@ -87,7 +89,13 @@ impl RunningSession {
         let _ = sender.send(RuntimeEvent::Started {
             action_id: action_id.clone(),
         });
-        let mut builder = CommandBuilder::new(&command.program);
+        // The child stops itself before exec so the output reader is active
+        // before even a single-instruction action can write and exit. This is
+        // required on FreeBSD, where unread PTY bytes may be discarded when a
+        // short-lived child closes the slave.
+        let mut builder = CommandBuilder::new("/bin/sh");
+        builder.args(["-c", "kill -STOP $$; exec \"$@\"", "crank-action"]);
+        builder.arg(&command.program);
         builder.args(&command.args);
         builder.cwd(&command.working_directory);
         let mut child = pair
@@ -97,6 +105,23 @@ impl RunningSession {
                 action: action_id.clone(),
                 message: error.to_string(),
             })?;
+        let child_pid = match child.process_id() {
+            Some(pid) => pid,
+            None => {
+                let _ = child.kill();
+                return Err(StartError::Synchronize {
+                    action: action_id.clone(),
+                    message: "the PTY backend did not expose the child process ID".to_owned(),
+                });
+            }
+        };
+        if let Err(error) = wait_until_stopped(child_pid) {
+            let _ = child.kill();
+            return Err(StartError::Synchronize {
+                action: action_id.clone(),
+                message: error.to_string(),
+            });
+        }
         let output_fd = pair
             .master
             .as_raw_fd()
@@ -107,7 +132,21 @@ impl RunningSession {
         let output = thread::Builder::new()
             .name("crank-action-output".to_owned())
             .spawn(move || copy_output(reader, output_fd, output_child_exited, output_sender))
-            .map_err(StartError::Monitor)?;
+            .map_err(|error| {
+                let _ = child.kill();
+                StartError::Monitor(error)
+            })?;
+        if unsafe { libc::kill(child_pid as libc::pid_t, libc::SIGCONT) } != 0 {
+            let error = std::io::Error::last_os_error();
+            let _ = child.kill();
+            child_exited.store(true, Ordering::Release);
+            drop(pair.slave);
+            let _ = output.join();
+            return Err(StartError::Synchronize {
+                action: action_id.clone(),
+                message: error.to_string(),
+            });
+        }
         let killer = child.clone_killer();
         let cancellation_requested = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::clone(&cancellation_requested);
@@ -210,6 +249,26 @@ impl RunningSession {
 
     pub fn has_exited(&self) -> bool {
         self.exited
+    }
+}
+
+fn wait_until_stopped(pid: u32) -> std::io::Result<()> {
+    loop {
+        let mut status = 0;
+        let waited = unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WUNTRACED) };
+        if waited == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if waited == pid as libc::pid_t && libc::WIFSTOPPED(status) {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(format!(
+            "child exited before its PTY reader was ready (wait status {status})"
+        )));
     }
 }
 
