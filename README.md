@@ -5,6 +5,16 @@ running a curated collection of shell scripts. The project is under active
 development; the bundled catalog currently contains harmless fixtures used to
 build and verify the platform.
 
+## Run Crank
+
+```console
+curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/crank.sh | sh
+```
+
+This downloads the matching `v0.1.0` executable, verifies its SHA-256 checksum,
+launches it through the controlling terminal, and removes the temporary files
+after Crank exits. No installation or administrator access is required.
+
 ## Development
 
 ```console
@@ -24,5 +34,5 @@ cancellation.
 See [SPEC.md](SPEC.md) for the product and portability contract.
 
 The tested release targets and bootstrap behavior are documented in
-[docs/portability.md](docs/portability.md). No public release has been
-published yet.
+[docs/portability.md](docs/portability.md). The current binaries and checksums
+are available from the [v0.1.0 release](https://github.com/dallagnoli/crank/releases/tag/v0.1.0).

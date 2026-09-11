@@ -19,7 +19,7 @@ platform system-library requirements.
 
 ## Bootstrap
 
-After version `0.1.0` is published, the ephemeral launch command will be:
+The ephemeral launch command for the current stable release is:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dallagnoli/crank/main/bootstrap/crank.sh | sh
