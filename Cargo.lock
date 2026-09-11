@@ -218,6 +218,7 @@ dependencies = [
  "clap",
  "crossterm",
  "include_dir",
+ "libc",
  "portable-pty",
  "predicates",
  "ratatui",

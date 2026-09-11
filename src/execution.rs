@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use thiserror::Error;
@@ -12,6 +13,7 @@ use crate::runtime::ResolvedCommand;
 
 const EVENT_BUFFER: usize = 128;
 const OUTPUT_CHUNK: usize = 8 * 1024;
+const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecutionStatus {
@@ -95,26 +97,26 @@ impl RunningSession {
                 action: action_id.clone(),
                 message: error.to_string(),
             })?;
-        // FreeBSD can report EOF when the master is read before a child has
-        // attached to the slave. Start the reader only after spawning, then
-        // wait until its thread is running before closing our slave handle.
-        let (reader_ready_sender, reader_ready) = sync_channel(0);
+        let output_fd = pair
+            .master
+            .as_raw_fd()
+            .expect("the native Unix PTY exposes a file descriptor");
+        let child_exited = Arc::new(AtomicBool::new(false));
+        let output_child_exited = Arc::clone(&child_exited);
         let output_sender = sender.clone();
         let output = thread::Builder::new()
             .name("crank-action-output".to_owned())
-            .spawn(move || {
-                let _ = reader_ready_sender.send(());
-                copy_output(reader, output_sender);
-            })
+            .spawn(move || copy_output(reader, output_fd, output_child_exited, output_sender))
             .map_err(StartError::Monitor)?;
-        let _ = reader_ready.recv();
-        drop(pair.slave);
         let killer = child.clone_killer();
         let cancellation_requested = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::clone(&cancellation_requested);
+        let slave = pair.slave;
         let monitor = thread::spawn(move || {
             let status = child.wait();
+            child_exited.store(true, Ordering::Release);
             let _ = output.join();
+            drop(slave);
             match status {
                 Ok(status) => {
                     let result = ExecutionResult {
@@ -211,9 +213,44 @@ impl RunningSession {
     }
 }
 
-fn copy_output(mut reader: Box<dyn Read + Send>, sender: SyncSender<RuntimeEvent>) {
+fn copy_output(
+    mut reader: Box<dyn Read + Send>,
+    fd: std::os::fd::RawFd,
+    child_exited: Arc<AtomicBool>,
+    sender: SyncSender<RuntimeEvent>,
+) {
     let mut buffer = vec![0; OUTPUT_CHUNK];
     loop {
+        let mut descriptor = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe {
+            libc::poll(
+                &mut descriptor,
+                1,
+                OUTPUT_POLL_INTERVAL.as_millis() as libc::c_int,
+            )
+        };
+        if ready == 0 {
+            if child_exited.load(Ordering::Acquire) {
+                break;
+            }
+            continue;
+        }
+        if ready < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            break;
+        }
+        if descriptor.revents & libc::POLLIN == 0 {
+            if descriptor.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                break;
+            }
+            continue;
+        }
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
