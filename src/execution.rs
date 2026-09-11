@@ -85,9 +85,10 @@ impl RunningSession {
         let _ = sender.send(RuntimeEvent::Started {
             action_id: action_id.clone(),
         });
-        // Begin reading while the original slave is still open. On FreeBSD a
-        // short-lived child can otherwise close the last slave before a late
-        // reader starts, causing its final buffered output to be lost.
+        // Begin reading while the original slave is still open. The monitor
+        // also retains that slave until the child exits: on FreeBSD a
+        // short-lived child can otherwise close the last slave before the
+        // reader enters its first read, causing its buffered output to be lost.
         let output_sender = sender.clone();
         let output = thread::Builder::new()
             .name("crank-action-output".to_owned())
@@ -104,12 +105,13 @@ impl RunningSession {
                 action: action_id.clone(),
                 message: error.to_string(),
             })?;
-        drop(pair.slave);
         let killer = child.clone_killer();
         let cancellation_requested = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::clone(&cancellation_requested);
+        let slave = pair.slave;
         let monitor = thread::spawn(move || {
             let status = child.wait();
+            drop(slave);
             let _ = output.join();
             match status {
                 Ok(status) => {
