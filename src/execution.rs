@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use thiserror::Error;
@@ -13,7 +12,6 @@ use crate::runtime::ResolvedCommand;
 
 const EVENT_BUFFER: usize = 128;
 const OUTPUT_CHUNK: usize = 8 * 1024;
-const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecutionStatus {
@@ -122,16 +120,10 @@ impl RunningSession {
                 message: error.to_string(),
             });
         }
-        let output_fd = pair
-            .master
-            .as_raw_fd()
-            .expect("the native Unix PTY exposes a file descriptor");
-        let child_exited = Arc::new(AtomicBool::new(false));
-        let output_child_exited = Arc::clone(&child_exited);
         let output_sender = sender.clone();
         let output = thread::Builder::new()
             .name("crank-action-output".to_owned())
-            .spawn(move || copy_output(reader, output_fd, output_child_exited, output_sender))
+            .spawn(move || copy_output(reader, output_sender))
             .map_err(|error| {
                 let _ = child.kill();
                 StartError::Monitor(error)
@@ -139,7 +131,6 @@ impl RunningSession {
         if unsafe { libc::kill(child_pid as libc::pid_t, libc::SIGCONT) } != 0 {
             let error = std::io::Error::last_os_error();
             let _ = child.kill();
-            child_exited.store(true, Ordering::Release);
             drop(pair.slave);
             let _ = output.join();
             return Err(StartError::Synchronize {
@@ -153,9 +144,11 @@ impl RunningSession {
         let slave = pair.slave;
         let monitor = thread::spawn(move || {
             let status = child.wait();
-            child_exited.store(true, Ordering::Release);
-            let _ = output.join();
+            // Keep a slave descriptor open until the child exits so FreeBSD
+            // cannot discard unread output when the child's descriptors close.
+            // Closing it here lets the blocking reader drain to EOF.
             drop(slave);
+            let _ = output.join();
             match status {
                 Ok(status) => {
                     let result = ExecutionResult {
@@ -272,46 +265,9 @@ fn wait_until_stopped(pid: u32) -> std::io::Result<()> {
     }
 }
 
-fn copy_output(
-    mut reader: Box<dyn Read + Send>,
-    fd: std::os::fd::RawFd,
-    child_exited: Arc<AtomicBool>,
-    sender: SyncSender<RuntimeEvent>,
-) {
+fn copy_output(mut reader: Box<dyn Read + Send>, sender: SyncSender<RuntimeEvent>) {
     let mut buffer = vec![0; OUTPUT_CHUNK];
     loop {
-        let mut descriptor = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let ready = unsafe {
-            libc::poll(
-                &mut descriptor,
-                1,
-                OUTPUT_POLL_INTERVAL.as_millis() as libc::c_int,
-            )
-        };
-        if ready == 0 {
-            if child_exited.load(Ordering::Acquire) {
-                break;
-            }
-            continue;
-        }
-        if ready < 0 {
-            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            break;
-        }
-        if descriptor.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
-            break;
-        }
-        // FreeBSD may report trailing PTY bytes with POLLHUP but without
-        // POLLIN. A read after hangup returns the buffered bytes, then EOF.
-        if descriptor.revents & (libc::POLLIN | libc::POLLHUP) == 0 {
-            continue;
-        }
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
