@@ -46,7 +46,7 @@ pub enum StartError {
     OpenWriter(String),
     #[error("could not launch action `{action}`: {message}")]
     Spawn { action: ActionId, message: String },
-    #[error("could not start the action monitor: {0}")]
+    #[error("could not start the action output monitor: {0}")]
     Monitor(std::io::Error),
 }
 
@@ -81,6 +81,19 @@ impl RunningSession {
             .take_writer()
             .map_err(|error| StartError::OpenWriter(error.to_string()))?;
 
+        let (sender, events) = sync_channel(EVENT_BUFFER);
+        let _ = sender.send(RuntimeEvent::Started {
+            action_id: action_id.clone(),
+        });
+        // Begin reading while the original slave is still open. On FreeBSD a
+        // short-lived child can otherwise close the last slave before a late
+        // reader starts, causing its final buffered output to be lost.
+        let output_sender = sender.clone();
+        let output = thread::Builder::new()
+            .name("crank-action-output".to_owned())
+            .spawn(move || copy_output(reader, output_sender))
+            .map_err(StartError::Monitor)?;
+
         let mut builder = CommandBuilder::new(&command.program);
         builder.args(&command.args);
         builder.cwd(&command.working_directory);
@@ -95,49 +108,35 @@ impl RunningSession {
         let killer = child.clone_killer();
         let cancellation_requested = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::clone(&cancellation_requested);
-        let (sender, events) = sync_channel(EVENT_BUFFER);
-        let started_id = action_id.clone();
-        let _ = sender.send(RuntimeEvent::Started {
-            action_id: started_id,
+        let monitor = thread::spawn(move || {
+            let status = child.wait();
+            let _ = output.join();
+            match status {
+                Ok(status) => {
+                    let result = ExecutionResult {
+                        action_id: command.action_id.clone(),
+                        status: if cancelled.load(Ordering::SeqCst) {
+                            ExecutionStatus::Cancelled
+                        } else if status.success() {
+                            ExecutionStatus::Succeeded
+                        } else {
+                            ExecutionStatus::Failed
+                        },
+                        exit_code: status.signal().is_none().then(|| status.exit_code()),
+                        signal: status.signal().map(str::to_owned),
+                    };
+                    let _ = sender.send(RuntimeEvent::Exited(result));
+                }
+                Err(error) => {
+                    let _ = sender.send(RuntimeEvent::Failed(format!(
+                        "could not wait for action `{}`: {error}",
+                        command.action_id
+                    )));
+                }
+            }
+            // Keep the extracted catalog alive until the monitored child has exited.
+            drop(command);
         });
-        let monitor = thread::Builder::new()
-            .name("crank-action-monitor".to_owned())
-            .spawn(move || {
-                let output_sender = sender.clone();
-                let output = thread::Builder::new()
-                    .name("crank-action-output".to_owned())
-                    .spawn(move || copy_output(reader, output_sender));
-                let status = child.wait();
-                if let Ok(output) = output {
-                    let _ = output.join();
-                }
-                match status {
-                    Ok(status) => {
-                        let result = ExecutionResult {
-                            action_id: command.action_id.clone(),
-                            status: if cancelled.load(Ordering::SeqCst) {
-                                ExecutionStatus::Cancelled
-                            } else if status.success() {
-                                ExecutionStatus::Succeeded
-                            } else {
-                                ExecutionStatus::Failed
-                            },
-                            exit_code: status.signal().is_none().then(|| status.exit_code()),
-                            signal: status.signal().map(str::to_owned),
-                        };
-                        let _ = sender.send(RuntimeEvent::Exited(result));
-                    }
-                    Err(error) => {
-                        let _ = sender.send(RuntimeEvent::Failed(format!(
-                            "could not wait for action `{}`: {error}",
-                            command.action_id
-                        )));
-                    }
-                }
-                // Keep the extracted catalog alive until the monitored child has exited.
-                drop(command);
-            })
-            .map_err(StartError::Monitor)?;
 
         Ok(Self {
             action_id,
@@ -288,16 +287,21 @@ mod tests {
     }
 
     #[test]
-    fn runs_fixture_in_a_pty() {
-        let mut session = start_fixture("fixture.hello");
-        let (result, output) = wait_for_result(&mut session);
-        assert_eq!(
-            result.status,
-            ExecutionStatus::Succeeded,
-            "result={result:?}, output={}",
-            String::from_utf8_lossy(&output)
-        );
-        assert!(String::from_utf8_lossy(&output).contains("Hello from Crank!"));
+    fn fast_exit_output_is_never_lost() {
+        for attempt in 1..=32 {
+            let mut session = start_fixture("fixture.hello");
+            let (result, output) = wait_for_result(&mut session);
+            assert_eq!(
+                result.status,
+                ExecutionStatus::Succeeded,
+                "attempt={attempt}, result={result:?}, output={}",
+                String::from_utf8_lossy(&output)
+            );
+            assert!(
+                String::from_utf8_lossy(&output).contains("Hello from Crank!"),
+                "attempt {attempt} lost output"
+            );
+        }
     }
 
     #[test]
