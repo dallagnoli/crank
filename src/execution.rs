@@ -245,10 +245,12 @@ fn copy_output(
             }
             break;
         }
-        if descriptor.revents & libc::POLLIN == 0 {
-            if descriptor.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
-                break;
-            }
+        if descriptor.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+            break;
+        }
+        // FreeBSD may report trailing PTY bytes with POLLHUP but without
+        // POLLIN. A read after hangup returns the buffered bytes, then EOF.
+        if descriptor.revents & (libc::POLLIN | libc::POLLHUP) == 0 {
             continue;
         }
         match reader.read(&mut buffer) {
@@ -351,7 +353,11 @@ mod tests {
         session.write_input(b"Ada\r").unwrap();
         let (result, output) = wait_for_result(&mut session);
         assert_eq!(result.status, ExecutionStatus::Succeeded);
-        assert!(String::from_utf8_lossy(&output).contains("Hello, Ada!"));
+        assert!(
+            String::from_utf8_lossy(&output).contains("Hello, Ada!"),
+            "interactive output was {}",
+            String::from_utf8_lossy(&output)
+        );
     }
 
     #[test]
